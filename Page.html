@@ -1,0 +1,292 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <base target="_top" />
+    <style>
+      html,
+      body,
+      #root,
+      .container {
+        height: 100%;
+      }
+      html,
+      body,
+      #root {
+        margin: 0;
+        padding: 0;
+      }
+      body {
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto,
+          'Helvetica Neue', sans-serif;
+      }
+      .container {
+        box-sizing: border-box;
+        display: flex;
+        flex-direction: column;
+        gap: 0.25em;
+        padding: 0.5em;
+      }
+      [hidden='true'] {
+        display: none;
+      }
+      .buttons {
+        display: flex;
+        flex-direction: row;
+        gap: 0.25em;
+      }
+      #btn-refresh {
+        align-self: flex-start;
+      }
+      ul {
+        flex: 1;
+        margin: 0;
+        padding: 0;
+        min-height: 0;
+        overflow-y: auto;
+        list-style: none;
+      }
+      li {
+        cursor: pointer;
+      }
+      li:hover {
+        background-color: #f1f3f4;
+      }
+      li:focus {
+        background-color: #e6f4ea;
+      }
+      li:active {
+        background-color: #ceead6;
+      }
+      li[aria-disabled='true'] {
+        opacity: 0.5;
+        cursor: not-allowed;
+      }
+      a {
+        display: block;
+        padding: 0.5em 1em;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="root"></div>
+  </body>
+  <script src="https://unpkg.com/babel-standalone@6/babel.min.js"></script>
+  <script
+    src="https://unpkg.com/react@17/umd/react.development.js"
+    crossorigin
+  ></script>
+  <script
+    src="https://unpkg.com/react-dom@17/umd/react-dom.development.js"
+    crossorigin
+  ></script>
+  <script type="text/babel">
+    const getSheets = () =>
+      new Promise((resolve) => {
+        function onSuccess(sheets) {}
+        google.script.run
+          .withSuccessHandler((sheets) => {
+            resolve([...sheets].sort((a, b) => a.name.localeCompare(b.name)));
+          })
+          .withFailureHandler((error) => reject(error))
+          .getSheets();
+      });
+
+    const activateSheet = (id) =>
+      new Promise((resolve, reject) => {
+        google.script.run
+          .withSuccessHandler(() => resolve())
+          .withFailureHandler((error) => reject(error))
+          .activateSheet(id);
+      });
+
+    const copyToNewSpreadsheet = (ids) =>
+      new Promise((resolve, reject) => {
+        google.script.run
+          .withSuccessHandler((result) => resolve(result))
+          .withFailureHandler((error) => reject(error))
+          .copyToNewSpreadsheet(ids);
+      });
+
+    const App = () => {
+      const [query, setQuery] = React.useState('');
+      const [isLoading, toggleLoading] = React.useState(true);
+      const [activatingSheetId, setActivatingSheetId] = React.useState(null);
+      const [isSelectMode, toggleSelectMode] = React.useState(false);
+      const [selectedSheets, setSelectedSheets] = React.useState([]);
+      const [isCreatingSpreadsheet, toggleCreatingSpreadsheet] = React.useState(
+        false
+      );
+      const [sheets, setSheets] = React.useState([]);
+
+      React.useEffect(() => {
+        getSheets().then((result) => {
+          setSheets(result);
+          toggleLoading(false);
+        });
+      }, []);
+
+      const effectiveQuery = query.replace(/\s/g, '').toLowerCase();
+      const searchResults = React.useMemo(() => {
+        return sheets.filter((sheet) =>
+          sheet.name.replace(/\s/g, '').toLowerCase().includes(effectiveQuery)
+        );
+      }, [sheets, effectiveQuery]);
+
+      const isAllSearchResultsSelected = searchResults.every((sheet) =>
+        selectedSheets.includes(sheet)
+      );
+
+      return (
+        <div className="container">
+          <div className="buttons">
+            <button
+              id="btn-refresh"
+              type="button"
+              onClick={() => {
+                toggleLoading(true);
+                getSheets().then((result) => {
+                  setSheets(result);
+                  toggleLoading(false);
+                });
+              }}
+              disabled={isLoading || isSelectMode}
+            >
+              {isLoading ? 'Loading...' : 'Refresh'}
+            </button>
+
+            <button
+              id="btn-select"
+              type="button"
+              onClick={() => {
+                toggleSelectMode(!isSelectMode);
+                setSelectedSheets([]);
+              }}
+              disabled={isLoading}
+            >
+              {isSelectMode ? 'Cancel' : 'Select'}
+            </button>
+
+            <button
+              id="btn-select-all"
+              type="button"
+              hidden={!isSelectMode}
+              onClick={() => {
+                if (isAllSearchResultsSelected) {
+                  setSelectedSheets(
+                    selectedSheets.filter(
+                      (sheet) => !searchResults.includes(sheet)
+                    )
+                  );
+                } else {
+                  setSelectedSheets(
+                    searchResults.reduce(
+                      (acc, sheet) => {
+                        if (!acc.includes(sheet)) {
+                          acc.push(sheet);
+                        }
+                        return acc;
+                      },
+                      [...selectedSheets]
+                    )
+                  );
+                }
+              }}
+            >
+              {isAllSearchResultsSelected ? 'Unselect All' : 'Select All'}
+            </button>
+
+            <button
+              id="btn-view"
+              type="button"
+              disabled={selectedSheets.length === 0 || isCreatingSpreadsheet}
+              hidden={!isSelectMode}
+              onClick={() => {
+                toggleCreatingSpreadsheet(true);
+                copyToNewSpreadsheet(selectedSheets.map((sheet) => sheet.id))
+                  .then((url) => {
+                    window.open(url);
+                    toggleCreatingSpreadsheet(false);
+                  })
+                  .catch((error) => {
+                    window.alert(String(error));
+                    console.error(error);
+                  });
+              }}
+            >
+              View
+            </button>
+          </div>
+
+          <input
+            type="search"
+            placeholder="Search"
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+          />
+          <ul>
+            {searchResults.map((sheet) => {
+              const { id, name } = sheet;
+              const isDisabled =
+                isLoading || (activatingSheetId && activatingSheetId !== id);
+              const isSelected = selectedSheets.includes(sheet);
+
+              const handleItemClick = () => {
+                if (isDisabled) {
+                  return;
+                }
+                if (isSelectMode) {
+                  if (isSelected) {
+                    setSelectedSheets(
+                      selectedSheets.filter((item) => item !== sheet)
+                    );
+                  } else {
+                    setSelectedSheets(selectedSheets.concat(sheet));
+                  }
+                  return;
+                }
+                if (activatingSheetId) {
+                  return;
+                }
+                setActivatingSheetId(id);
+                activateSheet(id)
+                  .then(() => {
+                    setActivatingSheetId(null);
+                  })
+                  .catch((error) => {
+                    console.error(error);
+                    window.alert(String(error));
+                  });
+              };
+
+              return (
+                <li key={id} role="option" aria-disabled={isDisabled}>
+                  <a
+                    tabIndex={isSelectMode ? undefined : 0}
+                    onKeyDown={(event) => {
+                      if (event.key === 'Enter') {
+                        handleItemClick();
+                      }
+                    }}
+                    onClick={() => handleItemClick()}
+                  >
+                    {isSelectMode && (
+                      <input
+                        type="checkbox"
+                        checked={isSelected}
+                        readOnly
+                        aria-labelledBy={`label-${id}`}
+                      />
+                    )}
+                    <span id={`label-${id}`}>{name}</span>
+                  </a>
+                </li>
+              );
+            })}
+          </ul>
+        </div>
+      );
+    };
+    const rootElement = document.getElementById('root');
+    ReactDOM.render(<App />, rootElement);
+  </script>
+</html>
